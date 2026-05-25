@@ -4,5 +4,5 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagDefault"
     android:canPerformGestures="true"
-    android:description="Layanan untuk melakukan scroll komik secara otomatis"
+    android:description="@string/desc_aksesibilitas"
     android:notificationTimeout="100" />
