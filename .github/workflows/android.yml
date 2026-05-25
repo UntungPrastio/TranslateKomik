@@ -20,8 +20,8 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Membangun Mesin Gradle
-      run: gradle wrapper
+    - name: Membangun Mesin Gradle Versi Stabil
+      run: gradle wrapper --gradle-version 8.2
 
     - name: Berikan Izin Eksekusi Gradlew
       run: chmod +x gradlew
