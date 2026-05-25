@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="#CC000000"
+    android:padding="8dp"
+    android:gravity="center">
+
+    <Button
+        android:id="@+id/btnTerjemah"
+        android:layout_width="65dp"
+        android:layout_height="65dp"
+        android:text="Terjemah"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:backgroundTint="#2196F3"
+        android:textColor="#FFFFFF"
+        android:layout_marginEnd="6dp"/>
+
+    <Button
+        android:id="@+id/btnSuara"
+        android:layout_width="65dp"
+        android:layout_height="65dp"
+        android:text="Suara"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:backgroundTint="#FF9800"
+        android:textColor="#FFFFFF"
+        android:layout_marginEnd="6dp"/>
+
+    <Button
+        android:id="@+id/btnScroll"
+        android:layout_width="65dp"
+        android:layout_height="65dp"
+        android:text="Scroll"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:backgroundTint="#9C27B0"
+        android:textColor="#FFFFFF"/>
+
+</LinearLayout>
+
