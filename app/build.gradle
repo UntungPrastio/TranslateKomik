@@ -29,11 +29,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     
-    // Pustaka Google ML Kit untuk Membaca Teks (OCR) Jepang/Manga
+    // Pustaka Google ML Kit
     implementation 'com.google.mlkit:text-recognition:16.0.0'
     implementation 'com.google.mlkit:text-recognition-japanese:16.0.0'
-    
-    // Pustaka Google ML Kit untuk Terjemahan Bahasa
     implementation 'com.google.mlkit:translate:17.0.2'
 }
-
