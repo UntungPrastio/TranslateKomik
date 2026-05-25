@@ -4,7 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions // Berubah ke Latin
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 class OCRHelper {
 
@@ -20,7 +20,7 @@ class OCRHelper {
 
     fun extractTextFromBitmap(bitmap: Bitmap, listener: OCRListener) {
         val image = InputImage.fromBitmap(bitmap, 0)
-        // Mesin diubah untuk membaca huruf Latin (Inggris/Indonesia)
+        // Mesin diubah untuk membaca huruf Latin/Inggris
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         recognizer.process(image)
@@ -37,7 +37,7 @@ class OCRHelper {
                 if (blockList.isNotEmpty()) {
                     listener.onSuccess(blockList)
                 } else {
-                    listener.onFailure("Tidak ada teks komik yang terdeteksi.")
+                    listener.onFailure("Tidak ada teks komik yang terdeteksi di layar.")
                 }
             }
             .addOnFailureListener { e ->
