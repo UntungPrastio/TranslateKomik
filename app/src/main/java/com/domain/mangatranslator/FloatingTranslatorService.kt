@@ -47,6 +47,7 @@ class FloatingTranslatorService : Service() {
 
     private var textToSpeech: TextToSpeech? = null
     private var isVoiceMode = false
+    private var isCapturing = false // Mencegah tombol dipencet berkali-kali
 
     private val overlayViews = mutableListOf<View>()
 
@@ -76,7 +77,6 @@ class FloatingTranslatorService : Service() {
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .build()
 
-            // PERBAIKAN CRASH: Menyebutkan tipe service secara spesifik untuk Android 14
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             } else {
@@ -129,12 +129,14 @@ class FloatingTranslatorService : Service() {
         val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
 
         btnTerjemah.setOnClickListener {
+            if (isCapturing) return@setOnClickListener
             isVoiceMode = false
             clearOldOverlays() 
             captureScreenAndProcess()
         }
 
         btnSuara.setOnClickListener {
+            if (isCapturing) return@setOnClickListener
             isVoiceMode = true
             clearOldOverlays()
             if (textToSpeech?.isSpeaking == true) {
@@ -148,7 +150,7 @@ class FloatingTranslatorService : Service() {
             if (scrollService != null) {
                 scrollService.scrollUp()
             } else {
-                Toast.makeText(this, "Tolong aktifkan layanan Aksesibilitas di Pengaturan HP Anda", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Aksesibilitas belum aktif. Buka Pengaturan HP.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -157,6 +159,7 @@ class FloatingTranslatorService : Service() {
         val intentData = dataIntent
         if (resultCode == Activity.RESULT_OK && intentData != null) {
             
+            isCapturing = true
             floatingView.visibility = View.INVISIBLE
 
             Handler(Looper.getMainLooper()).postDelayed({
@@ -179,9 +182,18 @@ class FloatingTranslatorService : Service() {
                         imageReader?.surface, null, null
                     )
 
+                    // Memunculkan pesan ini berfungsi ganda untuk memaksa layar agar bergerak/refresh
+                    Toast.makeText(this@FloatingTranslatorService, "Menjepret layar...", Toast.LENGTH_SHORT).show()
+
+                    var imageProcessed = false
+
                     imageReader?.setOnImageAvailableListener({ reader ->
+                        if (imageProcessed) return@setOnImageAvailableListener
                         val image = reader.acquireLatestImage()
+                        
                         if (image != null) {
+                            imageProcessed = true // Pastikan hanya memproses 1 gambar
+                            
                             val planes = image.planes
                             val buffer = planes[0].buffer
                             val pixelStride = planes[0].pixelStride
@@ -198,16 +210,14 @@ class FloatingTranslatorService : Service() {
 
                             stopScreenCapture()
                             floatingView.visibility = View.VISIBLE
+                            isCapturing = false
 
-                            if (isVoiceMode) {
-                                Toast.makeText(this@FloatingTranslatorService, "Membaca teks untuk disuarakan...", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(this@FloatingTranslatorService, "Mendeteksi tulisan komik...", Toast.LENGTH_SHORT).show()
-                            }
+                            Toast.makeText(this@FloatingTranslatorService, "Membaca teks...", Toast.LENGTH_SHORT).show()
                             
                             val ocrHelper = OCRHelper()
                             ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
                                 override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
+                                    Toast.makeText(this@FloatingTranslatorService, "Ditemukan ${blocks.size} balon teks. Menerjemahkan...", Toast.LENGTH_LONG).show()
                                     val translationHelper = TranslationHelper()
                                     
                                     for (block in blocks) {
@@ -226,7 +236,7 @@ class FloatingTranslatorService : Service() {
                                 }
 
                                 override fun onFailure(errorMessage: String) {
-                                    Toast.makeText(this@FloatingTranslatorService, "OCR Gagal: $errorMessage", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this@FloatingTranslatorService, errorMessage, Toast.LENGTH_SHORT).show()
                                 }
                             })
 
@@ -235,12 +245,13 @@ class FloatingTranslatorService : Service() {
 
                 } catch (e: Exception) {
                     e.printStackTrace()
+                    isCapturing = false
                     floatingView.visibility = View.VISIBLE
                     Toast.makeText(this, "Gagal menangkap layar: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
-            }, 100)
+            }, 200) // Sedikit memperlama jeda agar menu benar-benar hilang sebelum difoto
         } else {
-            Toast.makeText(this, "Izin tangkap layar belum disetujui!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Izin tangkap layar belum disetujui! Restart aplikasi.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -252,7 +263,7 @@ class FloatingTranslatorService : Service() {
                 this.setTextColor(Color.BLACK)
                 this.setBackgroundColor(Color.WHITE)
                 this.gravity = Gravity.CENTER
-                this.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                this.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                 this.setPadding(4, 4, 4, 4)
             }
 
