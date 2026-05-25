@@ -1,0 +1,41 @@
+name: Build Android APK Otomatis
+
+# Memicu proses perakitan setiap kali ada perubahan kode di branch 'main'
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Mengambil seluruh kode dari repositori GitHub Anda
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # 2. Menyiapkan sistem Java (JDK 17) yang diperlukan untuk Android modern
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    # 3. Memberikan izin akses keamanan pada sistem Gradle Android
+    - name: Berikan Izin Eksekusi Gradlew
+      run: chmod +x gradlew
+
+    # 4. Merakit kode menjadi file APK Debug
+    - name: Mulai Merakit APK
+      run: ./gradlew assembleDebug
+
+    # 5. Menyimpan dan memunculkan file APK yang sudah jadi agar bisa di-download
+    - name: Upload File APK Jadi
+      uses: actions/upload-artifact@v4
+      with:
+        name: Aplikasi-Terjemahan-Komik
+        path: app/build/outputs/apk/debug/app-debug.apk
+
