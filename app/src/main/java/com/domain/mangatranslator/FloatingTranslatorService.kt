@@ -39,7 +39,7 @@ class FloatingTranslatorService : Service() {
             val notification = Notification.Builder(this, channelId)
                 .setContentTitle("Penerjemah Komik Aktif")
                 .setContentText("Menu mengambang sedang berjalan di latar belakang.")
-                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setSmallIcon(android.R.drawable.ic_menu_camera) // Ikon bawaan Android sementara
                 .build()
 
             startForeground(1, notification)
@@ -52,7 +52,7 @@ class FloatingTranslatorService : Service() {
         
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         
-        // Memanggil desain tampilan layout_floating_menu.xml yang sudah Anda buat sebelumnya
+        // Memanggil desain tampilan layout_floating_menu.xml
         floatingView = LayoutInflater.from(this).inflate(R.layout.layout_floating_menu, null)
 
         // Mengatur parameter agar menu bisa mengambang di atas aplikasi lain
@@ -86,17 +86,24 @@ class FloatingTranslatorService : Service() {
         val btnSuara = floatingView.findViewById<Button>(R.id.btnSuara)
         val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
 
-        // Logika saat tombol ditekan (saat ini baru memunculkan pesan singkat)
+        // Tombol Terjemah
         btnTerjemah.setOnClickListener {
             Toast.makeText(this, "Mulai mengambil gambar layar untuk diterjemahkan...", Toast.LENGTH_SHORT).show()
         }
 
+        // Tombol Suara
         btnSuara.setOnClickListener {
             Toast.makeText(this, "Mulai membacakan teks...", Toast.LENGTH_SHORT).show()
         }
 
+        // Tombol Scroll Otomatis memanggil Layanan Aksesibilitas
         btnScroll.setOnClickListener {
-            Toast.makeText(this, "Fitur Scroll Otomatis diaktifkan...", Toast.LENGTH_SHORT).show()
+            val scrollService = AutoScrollAccessibilityService.instance
+            if (scrollService != null) {
+                scrollService.scrollUp()
+            } else {
+                Toast.makeText(this, "Tolong aktifkan layanan Aksesibilitas di Pengaturan HP Anda", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -108,4 +115,3 @@ class FloatingTranslatorService : Service() {
         }
     }
 }
-
