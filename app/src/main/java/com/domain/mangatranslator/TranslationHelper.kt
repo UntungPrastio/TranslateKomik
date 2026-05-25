@@ -20,6 +20,7 @@ class TranslationHelper {
 
         val translator = Translation.getClient(options)
 
+        // Jika baru pertama kali, ini akan mendownload kamus 30MB di latar belakang
         translator.downloadModelIfNeeded()
             .addOnSuccessListener {
                 translator.translate(text)
