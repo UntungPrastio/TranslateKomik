@@ -12,18 +12,16 @@ class TranslationHelper {
     }
 
     fun translateText(text: String, listener: TranslationListener) {
-        // Mengatur konfigurasi penerjemahan dari bahasa Jepang ke bahasa Indonesia
+        // Sumber bahasa diubah ke ENGLISH
         val options = TranslatorOptions.Builder()
-            .setSourceLanguage(TranslateLanguage.JAPANESE)
+            .setSourceLanguage(TranslateLanguage.ENGLISH)
             .setTargetLanguage(TranslateLanguage.INDONESIAN)
             .build()
 
         val translator = Translation.getClient(options)
 
-        // Mengecek dan mengunduh model bahasa di latar belakang jika belum tersedia di HP
         translator.downloadModelIfNeeded()
             .addOnSuccessListener {
-                // Proses menerjemahkan teks asing yang dikirim
                 translator.translate(text)
                     .addOnSuccessListener { translatedText ->
                         listener.onSuccess(translatedText)
@@ -37,4 +35,3 @@ class TranslationHelper {
             }
     }
 }
-
