@@ -4,11 +4,10 @@ import android.graphics.Bitmap
 import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions // Berubah ke Latin
 
 class OCRHelper {
 
-    // Model data terstruktur untuk mengikat teks beserta koordinat posisinya di layar
     data class TextBlockModel(
         val text: String,
         val boundingBox: Rect
@@ -21,17 +20,16 @@ class OCRHelper {
 
     fun extractTextFromBitmap(bitmap: Bitmap, listener: OCRListener) {
         val image = InputImage.fromBitmap(bitmap, 0)
-        val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
+        // Mesin diubah untuk membaca huruf Latin (Inggris/Indonesia)
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 val blockList = mutableListOf<TextBlockModel>()
                 
-                // Melakukan perulangan untuk mengambil setiap blok tulisan / balon kata komik
                 for (block in visionText.textBlocks) {
                     val box = block.boundingBox
                     if (box != null && block.text.isNotBlank()) {
-                        // Simpan teks beserta koordinat areanya
                         blockList.add(TextBlockModel(block.text, box))
                     }
                 }
