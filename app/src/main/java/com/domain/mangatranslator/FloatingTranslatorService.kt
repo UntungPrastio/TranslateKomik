@@ -51,12 +51,9 @@ class FloatingTranslatorService : Service() {
 
     private val overlayViews = mutableListOf<View>()
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
-    }
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Mengamankan token rekam layar dari sistem Android 14
         if (intent != null && intent.hasExtra("RESULT_CODE")) {
             resultCode = intent.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED)
             dataIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -65,306 +62,139 @@ class FloatingTranslatorService : Service() {
                 intent.getParcelableExtra("DATA_INTENT") as? Intent
             }
         }
-
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "manga_translator_channel"
-            val channel = NotificationChannel(
-                channelId,
-                "Layanan Penerjemah",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-
+            val channel = NotificationChannel(channelId, "Layanan", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
             val notification = Notification.Builder(this, channelId)
-                .setContentTitle("Penerjemah Komik Aktif")
-                .setContentText("Menu mengambang siap digunakan.")
-                .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .build()
-
+                .setContentTitle("Manga Translator Aktif").setSmallIcon(android.R.drawable.ic_menu_camera).build()
+            
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             } else {
                 startForeground(1, notification)
             }
         }
-        
-        // Mencegah Android me-restart service dengan token kosong jika memori penuh
-        return START_NOT_STICKY 
+        return START_NOT_STICKY
     }
 
     override fun onCreate() {
         super.onCreate()
-        
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        textToSpeech = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) textToSpeech?.language = Locale("id", "ID") }
         
-        textToSpeech = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                textToSpeech?.language = Locale("id", "ID")
-            }
-        }
-
         floatingView = LayoutInflater.from(this).inflate(R.layout.layout_floating_menu, null)
-
-        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
         )
-
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = 0
-        params.y = 100
-
         windowManager.addView(floatingView, params)
-
         setupButtons()
     }
 
     private fun setupButtons() {
-        val btnTerjemah = floatingView.findViewById<Button>(R.id.btnTerjemah)
-        val btnSuara = floatingView.findViewById<Button>(R.id.btnSuara)
-        val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
-
-        btnTerjemah.setOnClickListener {
-            if (isCapturing) return@setOnClickListener
-            isVoiceMode = false
-            clearOldOverlays() 
-            captureScreenAndProcess(btnTerjemah, btnSuara)
+        floatingView.findViewById<Button>(R.id.btnTerjemah).setOnClickListener { 
+            if (!isCapturing) { isVoiceMode = false; captureScreenAndProcess() }
         }
-
-        btnSuara.setOnClickListener {
-            if (isCapturing) return@setOnClickListener
-            isVoiceMode = true
-            clearOldOverlays()
-            if (textToSpeech?.isSpeaking == true) {
-                textToSpeech?.stop()
-            }
-            captureScreenAndProcess(btnTerjemah, btnSuara)
-        }
-
-        btnScroll.setOnClickListener {
-            val scrollService = AutoScrollAccessibilityService.instance
-            if (scrollService != null) {
-                scrollService.scrollUp()
-            } else {
-                btnScroll.text = "Gagal"
-                Handler(Looper.getMainLooper()).postDelayed({ btnScroll.text = "Scroll" }, 2000)
-            }
+        floatingView.findViewById<Button>(R.id.btnSuara).setOnClickListener { 
+            if (!isCapturing) { isVoiceMode = true; captureScreenAndProcess() }
         }
     }
 
-    private fun captureScreenAndProcess(btnTerjemah: Button, btnSuara: Button) {
-        val intentData = dataIntent
-        if (resultCode == Activity.RESULT_OK && intentData != null) {
-            
-            isCapturing = true
-            
-            // INDIKATOR VISUAL: Mengubah teks tombol agar Anda tahu aplikasi tidak hang
-            if (isVoiceMode) btnSuara.text = "⏳" else btnTerjemah.text = "⏳"
-
-            Handler(Looper.getMainLooper()).postDelayed({
-                floatingView.visibility = View.INVISIBLE
-
-                Handler(Looper.getMainLooper()).postDelayed({
-                    try {
-                        if (mediaProjection == null) {
-                            mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, intentData)
-                        }
-
-                        val display = windowManager.defaultDisplay
-                        val size = Point()
-                        display.getRealSize(size)
-                        val width = size.x
-                        val height = size.y
-
-                        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-                        virtualDisplay = mediaProjection?.createVirtualDisplay(
-                            "ScreenCapture",
-                            width, height, resources.displayMetrics.densityDpi,
-                            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                            imageReader?.surface, null, null
-                        )
-
-                        var imageProcessed = false
-
-                        // SISTEM ANTI-STUCK: Paksa batal jika layar diam selama 2 detik
-                        val timeoutHandler = Handler(Looper.getMainLooper())
-                        val timeoutRunnable = Runnable {
-                            if (!imageProcessed) {
-                                imageProcessed = true
-                                stopScreenCapture()
-                                floatingView.visibility = View.VISIBLE
-                                btnTerjemah.text = "Terjemah"
-                                btnSuara.text = "Suara"
-                                isCapturing = false
-                                Toast.makeText(this@FloatingTranslatorService, "Geser komik sedikit, lalu tekan lagi", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                        timeoutHandler.postDelayed(timeoutRunnable, 2000)
-
-                        imageReader?.setOnImageAvailableListener({ reader ->
-                            if (imageProcessed) return@setOnImageAvailableListener
-                            val image = reader.acquireLatestImage()
-                            
-                            if (image != null) {
-                                imageProcessed = true
-                                timeoutHandler.removeCallbacks(timeoutRunnable) // Batalkan anti-stuck karena gambar berhasil didapat
-                                
-                                val planes = image.planes
-                                val buffer = planes[0].buffer
-                                val pixelStride = planes[0].pixelStride
-                                val rowStride = planes[0].rowStride
-                                val rowPadding = rowStride - pixelStride * width
-
-                                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-                                bitmap.copyPixelsFromBuffer(buffer)
-                                image.close()
-
-                                stopScreenCapture()
-
-                                // Tampilkan menu kembali dan beri indikator memproses teks
-                                Handler(Looper.getMainLooper()).post {
-                                    floatingView.visibility = View.VISIBLE
-                                    if (isVoiceMode) btnSuara.text = "Proses.." else btnTerjemah.text = "Proses.."
-
-                                    val ocrHelper = OCRHelper()
-                                    ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
-                                        override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
-                                            // Kembalikan teks tombol ke semula
-                                            btnTerjemah.text = "Terjemah"
-                                            btnSuara.text = "Suara"
-                                            isCapturing = false
-                                            
-                                            val translationHelper = TranslationHelper()
-                                            for (block in blocks) {
-                                                translationHelper.translateText(block.text, object : TranslationHelper.TranslationListener {
-                                                    override fun onSuccess(translatedText: String) {
-                                                        if (isVoiceMode) {
-                                                            textToSpeech?.speak(translatedText, TextToSpeech.QUEUE_ADD, null, null)
-                                                        } else {
-                                                            drawTextOverlay(translatedText, block.boundingBox)
-                                                        }
-                                                    }
-                                                    override fun onFailure(errorMessage: String) {}
-                                                })
-                                            }
-                                        }
-
-                                        override fun onFailure(errorMessage: String) {
-                                            btnTerjemah.text = "Terjemah"
-                                            btnSuara.text = "Suara"
-                                            isCapturing = false
-                                            Toast.makeText(this@FloatingTranslatorService, "Teks tidak ditemukan", Toast.LENGTH_SHORT).show()
-                                        }
-                                    })
-                                }
-                            }
-                        }, Handler(Looper.getMainLooper()))
-
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        isCapturing = false
-                        floatingView.visibility = View.VISIBLE
-                        btnTerjemah.text = "Error"
-                        btnSuara.text = "Error"
-                        
-                        // Kembalikan teks tombol setelah 2 detik
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            btnTerjemah.text = "Terjemah"
-                            btnSuara.text = "Suara"
-                        }, 2000)
-                    }
-                }, 150) // Jeda 150ms agar menu mengambang benar-benar hilang dari jepretan layar
-            }, 50)
-        } else {
-            btnTerjemah.text = "Buka App"
-            Toast.makeText(this, "Izin hilang, tolong buka aplikasi utama lagi.", Toast.LENGTH_LONG).show()
-            
-            Handler(Looper.getMainLooper()).postDelayed({
-                btnTerjemah.text = "Terjemah"
-            }, 2000)
+    private fun captureScreenAndProcess() {
+        if (resultCode != Activity.RESULT_OK || dataIntent == null) {
+            Toast.makeText(this, "Izin rekam layar tidak valid", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        isCapturing = true
+        floatingView.visibility = View.INVISIBLE
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            try {
+                if (mediaProjection == null) mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, dataIntent!!)
+
+                val width = resources.displayMetrics.widthPixels
+                val height = resources.displayMetrics.heightPixels
+
+                imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 1)
+                virtualDisplay = mediaProjection?.createVirtualDisplay(
+                    "ScreenCapture", width, height, resources.displayMetrics.densityDpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader!!.surface, null, null
+                )
+
+                imageReader?.setOnImageAvailableListener({ reader ->
+                    val image = reader.acquireLatestImage()
+                    if (image != null) {
+                        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        bitmap.copyPixelsFromBuffer(image.planes[0].buffer)
+                        image.close()
+                        stopScreenCapture()
+                        
+                        Handler(Looper.getMainLooper()).post {
+                            floatingView.visibility = View.VISIBLE
+                            processImage(bitmap)
+                            isCapturing = false
+                        }
+                    }
+                }, Handler(Looper.getMainLooper()))
+
+            } catch (e: Exception) {
+                isCapturing = false
+                floatingView.visibility = View.VISIBLE
+                Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }, 500) // Penambahan jeda agar VirtualDisplay siap
+    }
+
+    private fun processImage(bitmap: Bitmap) {
+        OCRHelper().extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
+            override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
+                val translator = TranslationHelper()
+                for (block in blocks) {
+                    translator.translateText(block.text, object : TranslationHelper.TranslationListener {
+                        override fun onSuccess(translatedText: String) {
+                            if (isVoiceMode) textToSpeech?.speak(translatedText, TextToSpeech.QUEUE_ADD, null, null)
+                            else drawTextOverlay(translatedText, block.boundingBox)
+                        }
+                        override fun onFailure(e: String) {}
+                    })
+                }
+            }
+            override fun onFailure(e: String) { Toast.makeText(this@FloatingTranslatorService, e, Toast.LENGTH_SHORT).show() }
+        })
     }
 
     private fun drawTextOverlay(text: String, rect: android.graphics.Rect) {
-        val context = this
         Handler(Looper.getMainLooper()).post {
-            val textView = TextView(context).apply {
-                this.text = text
-                this.setTextColor(Color.BLACK)
-                this.setBackgroundColor(Color.WHITE)
-                this.gravity = Gravity.CENTER
+            val tv = TextView(this).apply {
+                this.text = text; this.setTextColor(Color.BLACK); this.setBackgroundColor(Color.WHITE)
                 this.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                this.setPadding(4, 4, 4, 4)
             }
-
-            val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
             val params = WindowManager.LayoutParams(
-                rect.width(),
-                rect.height(),
-                layoutFlag,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = rect.left
-                y = rect.top
-            }
-
-            try {
-                windowManager.addView(textView, params)
-                overlayViews.add(textView)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                rect.width(), rect.height(),
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+            ).apply { x = rect.left; y = rect.top }
+            windowManager.addView(tv, params)
+            overlayViews.add(tv)
         }
-    }
-
-    private fun clearOldOverlays() {
-        for (view in overlayViews) {
-            try {
-                windowManager.removeView(view)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        overlayViews.clear()
     }
 
     private fun stopScreenCapture() {
-        virtualDisplay?.release()
-        virtualDisplay = null
-        imageReader?.setOnImageAvailableListener(null, null)
-        imageReader = null
+        virtualDisplay?.release(); virtualDisplay = null
+        imageReader?.surface?.release(); imageReader = null
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        clearOldOverlays()
         stopScreenCapture()
-        
-        textToSpeech?.stop()
-        textToSpeech?.shutdown()
-        
         mediaProjection?.stop()
-        mediaProjection = null
-        if (::floatingView.isInitialized) {
-            windowManager.removeView(floatingView)
-        }
+        textToSpeech?.shutdown()
+        overlayViews.forEach { try { windowManager.removeView(it) } catch(e:Exception){} }
     }
 }
