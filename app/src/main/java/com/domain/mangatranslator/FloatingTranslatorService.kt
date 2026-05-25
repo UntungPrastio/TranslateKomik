@@ -47,7 +47,7 @@ class FloatingTranslatorService : Service() {
 
     private var textToSpeech: TextToSpeech? = null
     private var isVoiceMode = false
-    private var isCapturing = false // Mencegah tombol dipencet berkali-kali
+    private var isCapturing = false
 
     private val overlayViews = mutableListOf<View>()
 
@@ -56,9 +56,14 @@ class FloatingTranslatorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent != null) {
+        // Mengamankan token rekam layar dari sistem Android 14
+        if (intent != null && intent.hasExtra("RESULT_CODE")) {
             resultCode = intent.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED)
-            dataIntent = intent.getParcelableExtra("DATA_INTENT") as? Intent
+            dataIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra("DATA_INTENT", Intent::class.java)
+            } else {
+                intent.getParcelableExtra("DATA_INTENT") as? Intent
+            }
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -73,7 +78,7 @@ class FloatingTranslatorService : Service() {
 
             val notification = Notification.Builder(this, channelId)
                 .setContentTitle("Penerjemah Komik Aktif")
-                .setContentText("Menu mengambang sedang berjalan di latar belakang.")
+                .setContentText("Menu mengambang siap digunakan.")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .build()
 
@@ -83,7 +88,9 @@ class FloatingTranslatorService : Service() {
                 startForeground(1, notification)
             }
         }
-        return START_STICKY
+        
+        // Mencegah Android me-restart service dengan token kosong jika memori penuh
+        return START_NOT_STICKY 
     }
 
     override fun onCreate() {
@@ -132,7 +139,7 @@ class FloatingTranslatorService : Service() {
             if (isCapturing) return@setOnClickListener
             isVoiceMode = false
             clearOldOverlays() 
-            captureScreenAndProcess()
+            captureScreenAndProcess(btnTerjemah, btnSuara)
         }
 
         btnSuara.setOnClickListener {
@@ -142,7 +149,7 @@ class FloatingTranslatorService : Service() {
             if (textToSpeech?.isSpeaking == true) {
                 textToSpeech?.stop()
             }
-            captureScreenAndProcess()
+            captureScreenAndProcess(btnTerjemah, btnSuara)
         }
 
         btnScroll.setOnClickListener {
@@ -150,108 +157,142 @@ class FloatingTranslatorService : Service() {
             if (scrollService != null) {
                 scrollService.scrollUp()
             } else {
-                Toast.makeText(this, "Aksesibilitas belum aktif. Buka Pengaturan HP.", Toast.LENGTH_LONG).show()
+                btnScroll.text = "Gagal"
+                Handler(Looper.getMainLooper()).postDelayed({ btnScroll.text = "Scroll" }, 2000)
             }
         }
     }
 
-    private fun captureScreenAndProcess() {
+    private fun captureScreenAndProcess(btnTerjemah: Button, btnSuara: Button) {
         val intentData = dataIntent
         if (resultCode == Activity.RESULT_OK && intentData != null) {
             
             isCapturing = true
-            floatingView.visibility = View.INVISIBLE
+            
+            // INDIKATOR VISUAL: Mengubah teks tombol agar Anda tahu aplikasi tidak hang
+            if (isVoiceMode) btnSuara.text = "⏳" else btnTerjemah.text = "⏳"
 
             Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    if (mediaProjection == null) {
-                        mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, intentData)
-                    }
+                floatingView.visibility = View.INVISIBLE
 
-                    val display = windowManager.defaultDisplay
-                    val size = Point()
-                    display.getRealSize(size)
-                    val width = size.x
-                    val height = size.y
-
-                    imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-                    virtualDisplay = mediaProjection?.createVirtualDisplay(
-                        "ScreenCapture",
-                        width, height, resources.displayMetrics.densityDpi,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                        imageReader?.surface, null, null
-                    )
-
-                    // Memunculkan pesan ini berfungsi ganda untuk memaksa layar agar bergerak/refresh
-                    Toast.makeText(this@FloatingTranslatorService, "Menjepret layar...", Toast.LENGTH_SHORT).show()
-
-                    var imageProcessed = false
-
-                    imageReader?.setOnImageAvailableListener({ reader ->
-                        if (imageProcessed) return@setOnImageAvailableListener
-                        val image = reader.acquireLatestImage()
-                        
-                        if (image != null) {
-                            imageProcessed = true // Pastikan hanya memproses 1 gambar
-                            
-                            val planes = image.planes
-                            val buffer = planes[0].buffer
-                            val pixelStride = planes[0].pixelStride
-                            val rowStride = planes[0].rowStride
-                            val rowPadding = rowStride - pixelStride * width
-
-                            val bitmap = Bitmap.createBitmap(
-                                width + rowPadding / pixelStride,
-                                height,
-                                Bitmap.Config.ARGB_8888
-                            )
-                            bitmap.copyPixelsFromBuffer(buffer)
-                            image.close()
-
-                            stopScreenCapture()
-                            floatingView.visibility = View.VISIBLE
-                            isCapturing = false
-
-                            Toast.makeText(this@FloatingTranslatorService, "Membaca teks...", Toast.LENGTH_SHORT).show()
-                            
-                            val ocrHelper = OCRHelper()
-                            ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
-                                override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
-                                    Toast.makeText(this@FloatingTranslatorService, "Ditemukan ${blocks.size} balon teks. Menerjemahkan...", Toast.LENGTH_LONG).show()
-                                    val translationHelper = TranslationHelper()
-                                    
-                                    for (block in blocks) {
-                                        translationHelper.translateText(block.text, object : TranslationHelper.TranslationListener {
-                                            override fun onSuccess(translatedText: String) {
-                                                if (isVoiceMode) {
-                                                    textToSpeech?.speak(translatedText, TextToSpeech.QUEUE_ADD, null, null)
-                                                } else {
-                                                    drawTextOverlay(translatedText, block.boundingBox)
-                                                }
-                                            }
-
-                                            override fun onFailure(errorMessage: String) {}
-                                        })
-                                    }
-                                }
-
-                                override fun onFailure(errorMessage: String) {
-                                    Toast.makeText(this@FloatingTranslatorService, errorMessage, Toast.LENGTH_SHORT).show()
-                                }
-                            })
-
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        if (mediaProjection == null) {
+                            mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, intentData)
                         }
-                    }, Handler(Looper.getMainLooper()))
 
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    isCapturing = false
-                    floatingView.visibility = View.VISIBLE
-                    Toast.makeText(this, "Gagal menangkap layar: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }, 200) // Sedikit memperlama jeda agar menu benar-benar hilang sebelum difoto
+                        val display = windowManager.defaultDisplay
+                        val size = Point()
+                        display.getRealSize(size)
+                        val width = size.x
+                        val height = size.y
+
+                        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+                        virtualDisplay = mediaProjection?.createVirtualDisplay(
+                            "ScreenCapture",
+                            width, height, resources.displayMetrics.densityDpi,
+                            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                            imageReader?.surface, null, null
+                        )
+
+                        var imageProcessed = false
+
+                        // SISTEM ANTI-STUCK: Paksa batal jika layar diam selama 2 detik
+                        val timeoutHandler = Handler(Looper.getMainLooper())
+                        val timeoutRunnable = Runnable {
+                            if (!imageProcessed) {
+                                imageProcessed = true
+                                stopScreenCapture()
+                                floatingView.visibility = View.VISIBLE
+                                btnTerjemah.text = "Terjemah"
+                                btnSuara.text = "Suara"
+                                isCapturing = false
+                                Toast.makeText(this@FloatingTranslatorService, "Geser komik sedikit, lalu tekan lagi", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        timeoutHandler.postDelayed(timeoutRunnable, 2000)
+
+                        imageReader?.setOnImageAvailableListener({ reader ->
+                            if (imageProcessed) return@setOnImageAvailableListener
+                            val image = reader.acquireLatestImage()
+                            
+                            if (image != null) {
+                                imageProcessed = true
+                                timeoutHandler.removeCallbacks(timeoutRunnable) // Batalkan anti-stuck karena gambar berhasil didapat
+                                
+                                val planes = image.planes
+                                val buffer = planes[0].buffer
+                                val pixelStride = planes[0].pixelStride
+                                val rowStride = planes[0].rowStride
+                                val rowPadding = rowStride - pixelStride * width
+
+                                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                                bitmap.copyPixelsFromBuffer(buffer)
+                                image.close()
+
+                                stopScreenCapture()
+
+                                // Tampilkan menu kembali dan beri indikator memproses teks
+                                Handler(Looper.getMainLooper()).post {
+                                    floatingView.visibility = View.VISIBLE
+                                    if (isVoiceMode) btnSuara.text = "Proses.." else btnTerjemah.text = "Proses.."
+
+                                    val ocrHelper = OCRHelper()
+                                    ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
+                                        override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
+                                            // Kembalikan teks tombol ke semula
+                                            btnTerjemah.text = "Terjemah"
+                                            btnSuara.text = "Suara"
+                                            isCapturing = false
+                                            
+                                            val translationHelper = TranslationHelper()
+                                            for (block in blocks) {
+                                                translationHelper.translateText(block.text, object : TranslationHelper.TranslationListener {
+                                                    override fun onSuccess(translatedText: String) {
+                                                        if (isVoiceMode) {
+                                                            textToSpeech?.speak(translatedText, TextToSpeech.QUEUE_ADD, null, null)
+                                                        } else {
+                                                            drawTextOverlay(translatedText, block.boundingBox)
+                                                        }
+                                                    }
+                                                    override fun onFailure(errorMessage: String) {}
+                                                })
+                                            }
+                                        }
+
+                                        override fun onFailure(errorMessage: String) {
+                                            btnTerjemah.text = "Terjemah"
+                                            btnSuara.text = "Suara"
+                                            isCapturing = false
+                                            Toast.makeText(this@FloatingTranslatorService, "Teks tidak ditemukan", Toast.LENGTH_SHORT).show()
+                                        }
+                                    })
+                                }
+                            }
+                        }, Handler(Looper.getMainLooper()))
+
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        isCapturing = false
+                        floatingView.visibility = View.VISIBLE
+                        btnTerjemah.text = "Error"
+                        btnSuara.text = "Error"
+                        
+                        // Kembalikan teks tombol setelah 2 detik
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            btnTerjemah.text = "Terjemah"
+                            btnSuara.text = "Suara"
+                        }, 2000)
+                    }
+                }, 150) // Jeda 150ms agar menu mengambang benar-benar hilang dari jepretan layar
+            }, 50)
         } else {
-            Toast.makeText(this, "Izin tangkap layar belum disetujui! Restart aplikasi.", Toast.LENGTH_LONG).show()
+            btnTerjemah.text = "Buka App"
+            Toast.makeText(this, "Izin hilang, tolong buka aplikasi utama lagi.", Toast.LENGTH_LONG).show()
+            
+            Handler(Looper.getMainLooper()).postDelayed({
+                btnTerjemah.text = "Terjemah"
+            }, 2000)
         }
     }
 
