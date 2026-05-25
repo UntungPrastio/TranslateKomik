@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.hardware.display.DisplayManager
@@ -19,11 +20,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 
 class FloatingTranslatorService : Service() {
@@ -38,6 +41,9 @@ class FloatingTranslatorService : Service() {
     
     private var resultCode: Int = Activity.RESULT_CANCELED
     private var dataIntent: Intent? = null
+
+    // Array penampung TextView terjemahan aktif agar bisa dihapus saat layar di-refresh/scroll
+    private val overlayViews = mutableListOf<View>()
 
     override fun onBind(intent: Intent?): IBinder? {
         return null
@@ -107,6 +113,7 @@ class FloatingTranslatorService : Service() {
         val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
 
         btnTerjemah.setOnClickListener {
+            clearOldOverlays() // Hapus paksa semua teks terjemahan lama di layar sebelum membaca yang baru
             captureScreenAndProcess()
         }
 
@@ -170,20 +177,31 @@ class FloatingTranslatorService : Service() {
                             stopScreenCapture()
                             floatingView.visibility = View.VISIBLE
 
-                            Toast.makeText(this@FloatingTranslatorService, "Membaca teks dari gambar...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@FloatingTranslatorService, "Mendeteksi tulisan komik...", Toast.LENGTH_SHORT).show()
                             
-                            // MENGGUNAKAN OCRHelper UNTUK MEMBACA TEKS
+                            // 1. Jalankan Deteksi OCR Huruf Asing
                             val ocrHelper = OCRHelper()
                             ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
-                                override fun onSuccess(resultText: String) {
-                                    // Untuk sementara, teks yang dibaca ditampilkan dalam notifikasi Toast
-                                    Toast.makeText(this@FloatingTranslatorService, "Teks ditemukan:\n$resultText", Toast.LENGTH_LONG).show()
+                                override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
+                                    val translationHelper = TranslationHelper()
                                     
-                                    // [TAHAP BERIKUTNYA]: Teks ini akan dikirim ke API Terjemahan
+                                    // 2. Lakukan perulangan translasi untuk setiap balon kata yang ketemu
+                                    for (block in blocks) {
+                                        translationHelper.translateText(block.text, object : TranslationHelper.TranslationListener {
+                                            override fun onSuccess(translatedText: String) {
+                                                // 3. Timpa teks asli menggunakan koordinat kotak boks aslinya
+                                                drawTextOverlay(translatedText, block.boundingBox)
+                                            }
+
+                                            override fun onFailure(errorMessage: String) {
+                                                // Abaikan error parsial per blok agar blok lain tetap muncul
+                                            }
+                                        })
+                                    }
                                 }
 
                                 override fun onFailure(errorMessage: String) {
-                                    Toast.makeText(this@FloatingTranslatorService, "Gagal: $errorMessage", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this@FloatingTranslatorService, "OCR Gagal: $errorMessage", Toast.LENGTH_SHORT).show()
                                 }
                             })
 
@@ -201,6 +219,59 @@ class FloatingTranslatorService : Service() {
         }
     }
 
+    // FUNGSI UTAMA UNTUK MENIMPA TEKS ASLI (MENUTUPI BALON KATA)
+    private fun drawTextOverlay(text: String, rect: android.graphics.Rect) {
+        val context = this
+        Handler(Looper.getMainLooper()).post {
+            val textView = TextView(context).apply {
+                this.text = text
+                this.setTextColor(Color.BLACK) // Warna tulisan terjemahan hitam
+                this.setBackgroundColor(Color.WHITE) // Background putih murni untuk memblokir teks komik asli
+                this.gravity = Gravity.CENTER
+                this.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f) // Ukuran teks proporsional komik
+                this.setPadding(4, 4, 4, 4)
+            }
+
+            val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+
+            // Membuat dimensi layout persis seukuran koordinat kotak deteksi dari ML Kit
+            val params = WindowManager.LayoutParams(
+                rect.width(),
+                rect.height(),
+                layoutFlag,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = rect.left
+                y = rect.top
+            }
+
+            try {
+                windowManager.addView(textView, params)
+                overlayViews.add(textView) // Catat view ini agar bisa dihapus di aksi berikutnya
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    // Fungsi menghapus seluruh sisa terjemahan lama di layar
+    private fun clearOldOverlays() {
+        for (view in overlayViews) {
+            try {
+                windowManager.removeView(view)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        overlayViews.clear()
+    }
+
     private fun stopScreenCapture() {
         virtualDisplay?.release()
         virtualDisplay = null
@@ -210,6 +281,7 @@ class FloatingTranslatorService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        clearOldOverlays()
         stopScreenCapture()
         mediaProjection?.stop()
         mediaProjection = null
