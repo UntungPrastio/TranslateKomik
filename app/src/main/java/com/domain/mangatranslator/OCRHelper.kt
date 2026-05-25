@@ -1,42 +1,49 @@
 package com.domain.mangatranslator
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
-import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 class OCRHelper {
 
-    // Jembatan komunikasi untuk mengirimkan hasil teks yang berhasil dibaca
+    // Model data terstruktur untuk mengikat teks beserta koordinat posisinya di layar
+    data class TextBlockModel(
+        val text: String,
+        val boundingBox: Rect
+    )
+
     interface OCRListener {
-        fun onSuccess(resultText: String)
+        fun onSuccess(blocks: List<TextBlockModel>)
         fun onFailure(errorMessage: String)
     }
 
-    // Fungsi utama membaca gambar
     fun extractTextFromBitmap(bitmap: Bitmap, listener: OCRListener) {
         val image = InputImage.fromBitmap(bitmap, 0)
-        
-        // Catatan: Untuk saat ini kita atur mesinnya untuk membaca huruf Jepang (Manga).
-        // Anda bisa menggantinya dengan 'KoreanTextRecognizerOptions' untuk Manhwa nanti.
         val recognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
 
-        // Memulai proses pemindaian gambar
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
-                // Menggabungkan seluruh teks yang berhasil ditemukan di layar
-                val extractedText = visionText.text
-                if (extractedText.isNotBlank()) {
-                    listener.onSuccess(extractedText)
+                val blockList = mutableListOf<TextBlockModel>()
+                
+                // Melakukan perulangan untuk mengambil setiap blok tulisan / balon kata komik
+                for (block in visionText.textBlocks) {
+                    val box = block.boundingBox
+                    if (box != null && block.text.isNotBlank()) {
+                        // Simpan teks beserta koordinat areanya
+                        blockList.add(TextBlockModel(block.text, box))
+                    }
+                }
+
+                if (blockList.isNotEmpty()) {
+                    listener.onSuccess(blockList)
                 } else {
-                    listener.onFailure("Tidak ada teks yang terdeteksi di layar.")
+                    listener.onFailure("Tidak ada teks komik yang terdeteksi.")
                 }
             }
             .addOnFailureListener { e ->
-                listener.onFailure(e.message ?: "Gagal memindai teks dari gambar.")
+                listener.onFailure(e.message ?: "Gagal memindai gambar.")
             }
     }
 }
-
