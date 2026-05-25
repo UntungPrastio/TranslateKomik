@@ -1,6 +1,9 @@
 package com.domain.mangatranslator
 
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -12,10 +15,16 @@ import androidx.appcompat.app.AppCompatActivity
 class MainActivity : AppCompatActivity() {
 
     private val OVERLAY_PERMISSION_REQ_CODE = 1234
+    private val MEDIA_PROJECTION_REQ_CODE = 5678
+
+    private lateinit var mediaProjectionManager: MediaProjectionManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Inisialisasi pengelola perekaman layar sistem Android
+        mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
         val btnStart = findViewById<Button>(R.id.btnStart)
         val btnStop = findViewById<Button>(R.id.btnStop)
@@ -23,7 +32,8 @@ class MainActivity : AppCompatActivity() {
         // Aksi ketika tombol Memulai ditekan
         btnStart.setOnClickListener {
             if (checkOverlayPermission()) {
-                startFloatingService()
+                // Jika izin overlay sudah ada, lanjut minta izin menangkap layar
+                requestMediaProjectionPermission()
             } else {
                 requestOverlayPermission()
             }
@@ -35,7 +45,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Fungsi untuk mengecek apakah izin memunculkan menu mengambang sudah aktif
+    // Fungsi mengecek izin menu mengambang
     private fun checkOverlayPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(this)
@@ -44,7 +54,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Fungsi untuk meminta izin menu mengambang ke sistem Android
+    // Fungsi meminta izin menu mengambang
     private fun requestOverlayPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val intent = Intent(
@@ -55,9 +65,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Fungsi untuk menjalankan menu mengambang di latar belakang
-    private fun startFloatingService() {
-        val intent = Intent(this, FloatingTranslatorService::class.java)
+    // Fungsi meminta izin perekaman/penangkapan layar ponsel
+    private fun requestMediaProjectionPermission() {
+        startActivityForResult(
+            mediaProjectionManager.createScreenCaptureIntent(),
+            MEDIA_PROJECTION_REQ_CODE
+        )
+    }
+
+    // Fungsi menjalankan service dengan mengirimkan token izin rekam layar
+    private fun startFloatingService(resultCode: Int, data: Intent) {
+        val intent = Intent(this, FloatingTranslatorService::class.java).apply {
+            putExtra("RESULT_CODE", resultCode)
+            putExtra("DATA_INTENT", data)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
@@ -66,23 +87,34 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Layanan Terjemahan Dimulai", Toast.LENGTH_SHORT).show()
     }
 
-    // Fungsi untuk menghentikan menu mengambang
+    // Fungsi menghentikan menu mengambang
     private fun stopFloatingService() {
         val intent = Intent(this, FloatingTranslatorService::class.java)
         stopService(intent)
         Toast.makeText(this, "Layanan Terjemahan Dihentikan", Toast.LENGTH_SHORT).show()
     }
 
-    // Mengecek hasil setelah pengguna memberikan izin atau menolaknya
+    // Menangani hasil keputusan pemberian izin dari pengguna
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        
+        // Cek hasil izin overlay
         if (requestCode == OVERLAY_PERMISSION_REQ_CODE) {
             if (checkOverlayPermission()) {
-                startFloatingService()
+                requestMediaProjectionPermission()
             } else {
                 Toast.makeText(this, "Izin Overlay diperlukan untuk aplikasi ini!", Toast.LENGTH_SHORT).show()
             }
         }
+        
+        // Cek hasil izin tangkap layar
+        if (requestCode == MEDIA_PROJECTION_REQ_CODE) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                // Jika disetujui, jalankan menu mengambang dan kirimkan token layarnya
+                startFloatingService(resultCode, data)
+            } else {
+                Toast.makeText(this, "Izin Merekam Layar ditolak!", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }
-
