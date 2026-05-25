@@ -20,7 +20,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.view.Gravity
-importimport android.view.LayoutInflater
+import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
@@ -44,13 +44,11 @@ class FloatingTranslatorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Menerima data token izin perekaman layar dari MainActivity
         if (intent != null) {
             resultCode = intent.getIntExtra("RESULT_CODE", Activity.RESULT_CANCELED)
             dataIntent = intent.getParcelableExtra("DATA_INTENT") as? Intent
         }
 
-        // Mencegah aplikasi crash di Android 8.0 ke atas dengan Notifikasi Foreground
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "manga_translator_channel"
             val channel = NotificationChannel(
@@ -78,7 +76,6 @@ class FloatingTranslatorService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         
-        // Memanggil layout tampilan menu mengambang
         floatingView = LayoutInflater.from(this).inflate(R.layout.layout_floating_menu, null)
 
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -109,7 +106,6 @@ class FloatingTranslatorService : Service() {
         val btnSuara = floatingView.findViewById<Button>(R.id.btnSuara)
         val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
 
-        // Tombol Terjemah -> Sekarang menjalankan fungsi tangkap layar otomatis
         btnTerjemah.setOnClickListener {
             captureScreenAndProcess()
         }
@@ -128,29 +124,24 @@ class FloatingTranslatorService : Service() {
         }
     }
 
-    // Fungsi Utama untuk Menangkap Gambar Layar HP
     private fun captureScreenAndProcess() {
         val intentData = dataIntent
         if (resultCode == Activity.RESULT_OK && intentData != null) {
             
-            // Sembunyikan menu mengambang sementara agar tidak ikut terfoto di hasil screenshot
             floatingView.visibility = View.INVISIBLE
 
-            // Beri jeda 100 milidetik agar menu benar-benar hilang dari layar sebelum dijepret
             Handler(Looper.getMainLooper()).postDelayed({
                 try {
                     if (mediaProjection == null) {
                         mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, intentData)
                     }
 
-                    // Mendapatkan ukuran resolusi layar asli perangkat asli HP
                     val display = windowManager.defaultDisplay
                     val size = Point()
                     display.getRealSize(size)
                     val width = size.x
                     val height = size.y
 
-                    // Membuat wadah penampung gambar virtual
                     imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
                     virtualDisplay = mediaProjection?.createVirtualDisplay(
                         "ScreenCapture",
@@ -159,7 +150,6 @@ class FloatingTranslatorService : Service() {
                         imageReader?.surface, null, null
                     )
 
-                    // Memproses gambar saat sistem berhasil menangkap layar
                     imageReader?.setOnImageAvailableListener({ reader ->
                         val image = reader.acquireLatestImage()
                         if (image != null) {
@@ -169,7 +159,6 @@ class FloatingTranslatorService : Service() {
                             val rowStride = planes[0].rowStride
                             val rowPadding = rowStride - pixelStride * width
 
-                            // Mengubah buffer mentah menjadi data Bitmap Android siap pakai
                             val bitmap = Bitmap.createBitmap(
                                 width + rowPadding / pixelStride,
                                 height,
@@ -178,21 +167,31 @@ class FloatingTranslatorService : Service() {
                             bitmap.copyPixelsFromBuffer(buffer)
                             image.close()
 
-                            // Langsung hentikan penangkapan layar setelah berhasil mendapat 1 frame gambar
                             stopScreenCapture()
-
-                            // Tampilkan kembali menu mengambang ke layar Anda
                             floatingView.visibility = View.VISIBLE
 
-                            Toast.makeText(this, "Layar berhasil ditangkap! Siap diproses terjemahan.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@FloatingTranslatorService, "Membaca teks dari gambar...", Toast.LENGTH_SHORT).show()
                             
-                            // [TAHAP BERIKUTNYA]: Di sinilah kita akan meletakkan mesin Google ML Kit OCR untuk membaca teks dari variabel 'bitmap' ini.
+                            // MENGGUNAKAN OCRHelper UNTUK MEMBACA TEKS
+                            val ocrHelper = OCRHelper()
+                            ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
+                                override fun onSuccess(resultText: String) {
+                                    // Untuk sementara, teks yang dibaca ditampilkan dalam notifikasi Toast
+                                    Toast.makeText(this@FloatingTranslatorService, "Teks ditemukan:\n$resultText", Toast.LENGTH_LONG).show()
+                                    
+                                    // [TAHAP BERIKUTNYA]: Teks ini akan dikirim ke API Terjemahan
+                                }
+
+                                override fun onFailure(errorMessage: String) {
+                                    Toast.makeText(this@FloatingTranslatorService, "Gagal: $errorMessage", Toast.LENGTH_SHORT).show()
+                                }
+                            })
+
                         }
                     }, Handler(Looper.getMainLooper()))
 
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    // Jika gagal, pastikan menu mengambang dimunculkan kembali agar tidak hilang permanen
                     floatingView.visibility = View.VISIBLE
                     Toast.makeText(this, "Gagal menangkap layar: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
