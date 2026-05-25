@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -44,11 +45,9 @@ class FloatingTranslatorService : Service() {
     private var resultCode: Int = Activity.RESULT_CANCELED
     private var dataIntent: Intent? = null
 
-    // Fitur Suara (Text To Speech)
     private var textToSpeech: TextToSpeech? = null
-    private var isVoiceMode = false // Flag untuk membedakan mode teks penimpa atau suara
+    private var isVoiceMode = false
 
-    // Array penampung TextView terjemahan aktif
     private val overlayViews = mutableListOf<View>()
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -77,7 +76,12 @@ class FloatingTranslatorService : Service() {
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .build()
 
-            startForeground(1, notification)
+            // PERBAIKAN CRASH: Menyebutkan tipe service secara spesifik untuk Android 14
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            } else {
+                startForeground(1, notification)
+            }
         }
         return START_STICKY
     }
@@ -88,10 +92,9 @@ class FloatingTranslatorService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         
-        // Inisialisasi Fitur Suara (Text To Speech) ke Bahasa Indonesia
         textToSpeech = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                textToSpeech?.language = Locale("id", "ID") // Mengatur suara ke Bahasa Indonesia
+                textToSpeech?.language = Locale("id", "ID")
             }
         }
 
@@ -125,25 +128,21 @@ class FloatingTranslatorService : Service() {
         val btnSuara = floatingView.findViewById<Button>(R.id.btnSuara)
         val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
 
-        // 1. Tombol Terjemah Saja (Menimpa Teks Asli)
         btnTerjemah.setOnClickListener {
             isVoiceMode = false
             clearOldOverlays() 
             captureScreenAndProcess()
         }
 
-        // 2. Tombol Terjemahan Melalui Suara
         btnSuara.setOnClickListener {
             isVoiceMode = true
             clearOldOverlays()
-            // Hentikan suara sebelumnya jika masih berbicara
             if (textToSpeech?.isSpeaking == true) {
                 textToSpeech?.stop()
             }
             captureScreenAndProcess()
         }
 
-        // 3. Tombol Scroll Otomatis
         btnScroll.setOnClickListener {
             val scrollService = AutoScrollAccessibilityService.instance
             if (scrollService != null) {
@@ -206,7 +205,6 @@ class FloatingTranslatorService : Service() {
                                 Toast.makeText(this@FloatingTranslatorService, "Mendeteksi tulisan komik...", Toast.LENGTH_SHORT).show()
                             }
                             
-                            // Jalankan Deteksi OCR
                             val ocrHelper = OCRHelper()
                             ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
                                 override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
@@ -215,19 +213,14 @@ class FloatingTranslatorService : Service() {
                                     for (block in blocks) {
                                         translationHelper.translateText(block.text, object : TranslationHelper.TranslationListener {
                                             override fun onSuccess(translatedText: String) {
-                                                // Cek mode yang dipilih pengguna
                                                 if (isVoiceMode) {
-                                                    // JALANKAN SUARA: Membaca lantang hasil terjemahan Indonesia
                                                     textToSpeech?.speak(translatedText, TextToSpeech.QUEUE_ADD, null, null)
                                                 } else {
-                                                    // JALANKAN OVERLAY: Menimpa teks asli di layar
                                                     drawTextOverlay(translatedText, block.boundingBox)
                                                 }
                                             }
 
-                                            override fun onFailure(errorMessage: String) {
-                                                // Abaikan error parsial agar blok lain tetap jalan
-                                            }
+                                            override fun onFailure(errorMessage: String) {}
                                         })
                                     }
                                 }
@@ -313,7 +306,6 @@ class FloatingTranslatorService : Service() {
         clearOldOverlays()
         stopScreenCapture()
         
-        // Matikan fitur suara secara bersih saat service dihentikan
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         
