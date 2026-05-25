@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.speech.tts.TextToSpeech
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -28,6 +29,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 
 class FloatingTranslatorService : Service() {
 
@@ -42,7 +44,11 @@ class FloatingTranslatorService : Service() {
     private var resultCode: Int = Activity.RESULT_CANCELED
     private var dataIntent: Intent? = null
 
-    // Array penampung TextView terjemahan aktif agar bisa dihapus saat layar di-refresh/scroll
+    // Fitur Suara (Text To Speech)
+    private var textToSpeech: TextToSpeech? = null
+    private var isVoiceMode = false // Flag untuk membedakan mode teks penimpa atau suara
+
+    // Array penampung TextView terjemahan aktif
     private val overlayViews = mutableListOf<View>()
 
     override fun onBind(intent: Intent?): IBinder? {
@@ -82,6 +88,13 @@ class FloatingTranslatorService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         
+        // Inisialisasi Fitur Suara (Text To Speech) ke Bahasa Indonesia
+        textToSpeech = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                textToSpeech?.language = Locale("id", "ID") // Mengatur suara ke Bahasa Indonesia
+            }
+        }
+
         floatingView = LayoutInflater.from(this).inflate(R.layout.layout_floating_menu, null)
 
         val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -112,15 +125,25 @@ class FloatingTranslatorService : Service() {
         val btnSuara = floatingView.findViewById<Button>(R.id.btnSuara)
         val btnScroll = floatingView.findViewById<Button>(R.id.btnScroll)
 
+        // 1. Tombol Terjemah Saja (Menimpa Teks Asli)
         btnTerjemah.setOnClickListener {
-            clearOldOverlays() // Hapus paksa semua teks terjemahan lama di layar sebelum membaca yang baru
+            isVoiceMode = false
+            clearOldOverlays() 
             captureScreenAndProcess()
         }
 
+        // 2. Tombol Terjemahan Melalui Suara
         btnSuara.setOnClickListener {
-            Toast.makeText(this, "Mulai membacakan teks...", Toast.LENGTH_SHORT).show()
+            isVoiceMode = true
+            clearOldOverlays()
+            // Hentikan suara sebelumnya jika masih berbicara
+            if (textToSpeech?.isSpeaking == true) {
+                textToSpeech?.stop()
+            }
+            captureScreenAndProcess()
         }
 
+        // 3. Tombol Scroll Otomatis
         btnScroll.setOnClickListener {
             val scrollService = AutoScrollAccessibilityService.instance
             if (scrollService != null) {
@@ -177,24 +200,33 @@ class FloatingTranslatorService : Service() {
                             stopScreenCapture()
                             floatingView.visibility = View.VISIBLE
 
-                            Toast.makeText(this@FloatingTranslatorService, "Mendeteksi tulisan komik...", Toast.LENGTH_SHORT).show()
+                            if (isVoiceMode) {
+                                Toast.makeText(this@FloatingTranslatorService, "Membaca teks untuk disuarakan...", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(this@FloatingTranslatorService, "Mendeteksi tulisan komik...", Toast.LENGTH_SHORT).show()
+                            }
                             
-                            // 1. Jalankan Deteksi OCR Huruf Asing
+                            // Jalankan Deteksi OCR
                             val ocrHelper = OCRHelper()
                             ocrHelper.extractTextFromBitmap(bitmap, object : OCRHelper.OCRListener {
                                 override fun onSuccess(blocks: List<OCRHelper.TextBlockModel>) {
                                     val translationHelper = TranslationHelper()
                                     
-                                    // 2. Lakukan perulangan translasi untuk setiap balon kata yang ketemu
                                     for (block in blocks) {
                                         translationHelper.translateText(block.text, object : TranslationHelper.TranslationListener {
                                             override fun onSuccess(translatedText: String) {
-                                                // 3. Timpa teks asli menggunakan koordinat kotak boks aslinya
-                                                drawTextOverlay(translatedText, block.boundingBox)
+                                                // Cek mode yang dipilih pengguna
+                                                if (isVoiceMode) {
+                                                    // JALANKAN SUARA: Membaca lantang hasil terjemahan Indonesia
+                                                    textToSpeech?.speak(translatedText, TextToSpeech.QUEUE_ADD, null, null)
+                                                } else {
+                                                    // JALANKAN OVERLAY: Menimpa teks asli di layar
+                                                    drawTextOverlay(translatedText, block.boundingBox)
+                                                }
                                             }
 
                                             override fun onFailure(errorMessage: String) {
-                                                // Abaikan error parsial per blok agar blok lain tetap muncul
+                                                // Abaikan error parsial agar blok lain tetap jalan
                                             }
                                         })
                                     }
@@ -219,16 +251,15 @@ class FloatingTranslatorService : Service() {
         }
     }
 
-    // FUNGSI UTAMA UNTUK MENIMPA TEKS ASLI (MENUTUPI BALON KATA)
     private fun drawTextOverlay(text: String, rect: android.graphics.Rect) {
         val context = this
         Handler(Looper.getMainLooper()).post {
             val textView = TextView(context).apply {
                 this.text = text
-                this.setTextColor(Color.BLACK) // Warna tulisan terjemahan hitam
-                this.setBackgroundColor(Color.WHITE) // Background putih murni untuk memblokir teks komik asli
+                this.setTextColor(Color.BLACK)
+                this.setBackgroundColor(Color.WHITE)
                 this.gravity = Gravity.CENTER
-                this.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f) // Ukuran teks proporsional komik
+                this.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 this.setPadding(4, 4, 4, 4)
             }
 
@@ -238,7 +269,6 @@ class FloatingTranslatorService : Service() {
                 WindowManager.LayoutParams.TYPE_PHONE
             }
 
-            // Membuat dimensi layout persis seukuran koordinat kotak deteksi dari ML Kit
             val params = WindowManager.LayoutParams(
                 rect.width(),
                 rect.height(),
@@ -253,14 +283,13 @@ class FloatingTranslatorService : Service() {
 
             try {
                 windowManager.addView(textView, params)
-                overlayViews.add(textView) // Catat view ini agar bisa dihapus di aksi berikutnya
+                overlayViews.add(textView)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
     }
 
-    // Fungsi menghapus seluruh sisa terjemahan lama di layar
     private fun clearOldOverlays() {
         for (view in overlayViews) {
             try {
@@ -283,6 +312,11 @@ class FloatingTranslatorService : Service() {
         super.onDestroy()
         clearOldOverlays()
         stopScreenCapture()
+        
+        // Matikan fitur suara secara bersih saat service dihentikan
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        
         mediaProjection?.stop()
         mediaProjection = null
         if (::floatingView.isInitialized) {
